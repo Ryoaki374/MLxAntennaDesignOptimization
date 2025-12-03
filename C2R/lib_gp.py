@@ -1,0 +1,141 @@
+from lib_config import AppConfig
+import numpy as np
+import pandas as pd
+from scipy.optimize import minimize
+from scipy.stats import norm
+
+class GaussianProcess:
+    def __init__(self, config: AppConfig,):
+        self.cfg = config
+
+    def run_gp(self, X_sample, y_sample):
+        #X_sample = df_current[self.cfg.sim.param_names].values
+        #y_sample = df_current[['S11']].values
+        print(f"  > Loaded {len(X_sample)} data points for GP model training.")
+
+        print("  > Optimizing GP hyperparameters...")
+        res_hyper = minimize(
+            fun= negative_log_marginal_likelihood, x0=[self.cfg.sim.length_scale],
+            args=(X_sample, y_sample, self.cfg.sim.noise_var), bounds=[(1e-2, 1e2)]
+        )
+        optimized_length_scale = res_hyper.x[0]
+        print(f"  > Optimized Length Scale: {optimized_length_scale:.4f}")
+
+        K_opt = kernel(X_sample, X_sample, optimized_length_scale)
+        Ky_opt = K_opt + self.cfg.sim.noise_var * np.identity(len(X_sample))
+        Ky_opt_inv = np.linalg.inv(Ky_opt)
+        return optimized_length_scale, K_opt, Ky_opt, Ky_opt_inv, res_hyper
+    
+    def getExpectedImprovement(self, X_sample, y_sample, Ky_inv, length_scale, lower_bounds, upper_bounds, dims):
+        
+        best_acq_value = -np.inf
+        best_x = None
+        n_restarts = 25
+        bounds = list(zip(lower_bounds, upper_bounds))
+
+        for i in range(n_restarts):
+            x0 = np.random.uniform(lower_bounds, upper_bounds, dims)
+            res = minimize(
+                fun=negative_expected_improvement, x0=x0,
+                args=(X_sample, y_sample, Ky_inv, length_scale),
+                bounds=bounds, method='L-BFGS-B'
+            )
+            if res.success and -res.fun > best_acq_value:
+                best_acq_value = -res.fun
+                best_x = res.x
+
+        if best_x is None:
+            print("  > WARNING: Acquisition optimization failed. Using a random point.")
+            best_x = np.random.uniform(lower_bounds, upper_bounds, dims)
+        return best_x, best_acq_value
+
+
+
+
+
+
+# ==============================================================================
+# 2. Gaussian Process Helper Functions
+# ==============================================================================
+def rbf_kernel(x1: np.ndarray, x2: np.ndarray, length_scale: float = 1.0) -> np.ndarray:
+    if x1.ndim == 1: x1 = x1.reshape(1, -1)
+    if x2.ndim == 1: x2 = x2.reshape(1, -1)
+    sqdist = np.sum((x1[:, np.newaxis, :] - x2[np.newaxis, :, :]) ** 2, axis=-1)
+    return np.exp(-0.5 / length_scale**2 * sqdist)
+
+def matern_kernel(x1: np.ndarray, x2: np.ndarray, length_scale: float = 1.0, nu: float = 2.5) -> np.ndarray:
+    if x1.ndim == 1: x1 = x1.reshape(1, -1)
+    if x2.ndim == 1: x2 = x2.reshape(1, -1)
+    dist = np.sqrt(np.sum((x1[:, np.newaxis, :] - x2[np.newaxis, :, :]) ** 2, axis=-1))
+    
+    if nu == 2.5:
+        term1 = np.sqrt(5) * dist / length_scale
+        term2 = 5 * dist**2 / (3 * length_scale**2)
+        return (1 + term1 + term2) * np.exp(-term1)
+    else:
+        return rbf_kernel(x1, x2, length_scale)
+
+def kernel(x1: np.ndarray, x2: np.ndarray, length_scale: float, KERNEL_TYPE='RBF') -> np.ndarray:
+    if KERNEL_TYPE == 'RBF':
+        return rbf_kernel(x1, x2, length_scale)
+    elif KERNEL_TYPE == 'Matern':
+        return matern_kernel(x1, x2, length_scale, nu=2.5)
+    else:
+        raise ValueError("Unknown KERNEL_TYPE specified.")
+
+def get_posterior(x_new, X_sample, y_sample, Ky_opt_inv, length_scale):
+    x_new = x_new.reshape(1, -1)
+    K_star = kernel(X_sample, x_new, length_scale)
+    mu_post = K_star.T @ Ky_opt_inv @ y_sample
+    K_star_star = 1.0 
+    cov_post = K_star_star - K_star.T @ Ky_opt_inv @ K_star
+    s2_post = np.maximum(0, cov_post.item())
+    return mu_post.item(), np.sqrt(s2_post)
+
+def expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi=0.01):
+    mu, sigma = get_posterior(x_new, X_sample, y_sample, Ky_opt_inv, length_scale)
+    y_best = np.min(y_sample)
+    if sigma == 0: return 0
+    imp = y_best - mu - xi
+    Z = imp / sigma
+    ei = imp * norm.cdf(Z) + sigma * norm.pdf(Z)
+    return ei
+
+def negative_expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi=0.01):
+    return -expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi)
+
+def optimize_acquisition(X_sample, y_sample, Ky_opt_inv, length_scale, lower_bounds, upper_bounds, DIMS):
+    best_acq_value = -np.inf
+    best_x = None
+    n_restarts = 25
+    bounds = list(zip(lower_bounds, upper_bounds))
+
+    for i in range(n_restarts):
+        x0 = np.random.uniform(lower_bounds, upper_bounds, DIMS)
+        res = minimize(
+            fun=negative_expected_improvement, x0=x0,
+            args=(X_sample, y_sample, Ky_opt_inv, length_scale),
+            bounds=bounds, method='L-BFGS-B'
+        )
+        if res.success and -res.fun > best_acq_value:
+            best_acq_value = -res.fun
+            best_x = res.x
+    
+    if best_x is None:
+        print("  > WARNING: Acquisition optimization failed. Using a random point.")
+        best_x = np.random.uniform(lower_bounds, upper_bounds, DIMS)
+    return best_x, best_acq_value
+
+def negative_log_marginal_likelihood(params, X, y, noise_var):
+    length_scale = params[0]
+    if length_scale <= 0: return np.inf
+    n = len(X)
+    K = kernel(X, X, length_scale)
+    Ky = K + noise_var * np.identity(n)
+    try:
+        L = np.linalg.cholesky(Ky)
+        alpha = np.linalg.solve(L.T, np.linalg.solve(L, y))
+        log_det_Ky = 2 * np.sum(np.log(np.diag(L)))
+        return (0.5 * (y.T @ alpha) + 0.5 * log_det_Ky + 0.5 * n * np.log(2 * np.pi)).item()
+    except np.linalg.LinAlgError:
+        return np.inf

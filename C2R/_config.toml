@@ -1,0 +1,45 @@
+# _config.toml
+
+# ------------------------------------------------------------  IO
+[io]
+    filename_input  = "params.csv"      # temporary csv file for setting HFSS params
+    filename_output = "results.csv"     # csv file for storing results
+    filename_temp   = "temp_hfss_export.csv" # temporary csv file for passing results
+
+# ------------------------------------------------------------  Simulation/Hyperparams
+[sim]
+    n_simulation    = 100   # maximum number of smulations per each iteration
+    n_repeats       = 1     # total nuber of iterations
+    n_init          = 20
+    kernel_type     = "RBF" # kernel name
+    n_params        = 8
+    length_scale    = 1.0
+    noise_std       = 0.01
+    noise_var       = 0.0001
+    lower_bounds    = [0.100, 0.400, 0.100, 0.400, 0.100, 0.400, 0.100, 0.400]
+    upper_bounds    = [0.215, 0.850, 0.215, 0.850, 0.215, 0.850, 0.215, 0.850]
+    param_names     = ['s1x', 's1y', 's2x', 's2y', 's3x', 's3y', 's4x', 's4y']
+
+# ------------------------------------------------------------  HFSS simulation
+[hfss]
+    n_simulation    = 100   # maximum number of smulations per each iteration
+    n_repeats       = 1     # total nuber of iterations
+    n_init          = 20
+    n_params        = 8
+    lower_bounds    = [0.100, 0.400, 0.100, 0.400, 0.100, 0.400, 0.100, 0.400]
+    upper_bounds    = [0.215, 0.850, 0.215, 0.850, 0.215, 0.850, 0.215, 0.850]
+    param_names     = ['s1x', 's1y', 's2x', 's2y', 's3x', 's3y', 's4x', 's4y']
+
+
+# ------------------------------------------------------------  Synthetic Test Function
+[test]
+    n_simulation    = 500
+    n_repeats       = 1     # total nuber of iterations
+    n_params        = 2
+    n_init          = 20
+    #lower_bounds    = [-32, -32, -32, -32, -32, -32, -32, -32]
+    lower_bounds    = [-32, -32,]
+    #upper_bounds    = [32, 32, 32, 32, 32, 32, 32, 32]
+    upper_bounds    = [32, 32,]
+    #param_names     = ['s1x', 's1y', 's2x', 's2y', 's3x', 's3y', 's4x', 's4y']
+    param_names     = ['s1x', 's1y',]
