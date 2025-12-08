@@ -13,7 +13,7 @@ plt.style.use("./graph_preset.mplstyle")
 
 def test_1D(x: np.ndarray) -> np.ndarray:
     """True function to be approximated (1D)."""
-    return np.sin(2 * np.pi * x) + 0.3 * np.sin(8 * np.pi * x) + 0.5 * x
+    return np.cos(2 * np.pi * x) - 0.3 * np.sin(8 * np.pi * x) + 0.5 * x
 
 
 def ackley_2d(x: np.ndarray) -> np.ndarray:
@@ -34,6 +34,7 @@ def ackley_2d(x: np.ndarray) -> np.ndarray:
 
     return term1 + term2 + a + np.exp(1)
 
+
 def griewank_2d(x: np.ndarray) -> np.ndarray:
     """Griewank function (2D). Global Minimum: f(0,0) = 0."""
     if x.ndim == 1:
@@ -47,6 +48,7 @@ def griewank_2d(x: np.ndarray) -> np.ndarray:
     term_prod = np.cos(x1) * np.cos(x2 / np.sqrt(2))
 
     return 1 + term_sum - term_prod
+
 
 def ackley_nd(x: np.ndarray) -> np.ndarray:
 
@@ -66,6 +68,7 @@ def ackley_nd(x: np.ndarray) -> np.ndarray:
     term2 = -np.exp((1 / d) * cos_sum)
 
     return term1 + term2 + a + np.exp(1)
+
 
 def griewank_nd(x: np.ndarray) -> np.ndarray:
 
@@ -295,10 +298,10 @@ def plot_gp_results(
     )
 
     ax1.set_ylabel("Value")
-    ax1.legend(loc="lower left")
+    # ax1.legend(loc="lower left")
     ax1.grid(False)
     ax1.set_xlim(0, 1)
-    ax1.set_ylim(-3, 3)
+    ax1.set_ylim(-3.2, 3.2)
     plt.setp(ax1.get_xticklabels(), visible=False)
 
     # Bottom plot: Acquisition Function
@@ -315,13 +318,74 @@ def plot_gp_results(
     ax2.grid(False)
     ax2.set_xlim(0, 1)
 
-    # Dynamic Y-limit
-    y_min = np.min(acq_values)
-    y_max = np.max(acq_values)
-    if strategy_name == "EI":
-        ax2.set_ylim(-0.003, max(0.013, y_max * 1.1))
-    else:
-        margin = (y_max - y_min) * 0.1 if (y_max - y_min) > 0 else 1.0
-        ax2.set_ylim(y_min - margin, y_max + margin)
+    ax2.set_ylim(-2.4, 2.4)
 
     plt.show()
+
+
+def plot_gp_results_enhanced(
+    X_grid,
+    true_func,
+    X_init,
+    y_init,
+    best_x,
+    best_y,
+    mu_post,
+    sigma_post,
+    acq_values,
+    strategy_name,
+):
+
+    fig = plt.figure(figsize=(9, 7), dpi=80)
+
+    gs = gridspec.GridSpec(
+        2,
+        2,
+        height_ratios=[3, 1],
+        width_ratios=[4, 1],
+    )
+    gs.update(hspace=0.0, wspace=0.0)  # ← スキマを完全に 0
+
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+    ax3 = fig.add_subplot(gs[0, 1], sharey=ax1)
+    ax4 = fig.add_subplot(gs[1, 1], sharex=ax3, sharey=ax2)
+
+    # ax1: GP
+    ax1.plot(X_grid, true_func(X_grid), "k-", linewidth=2)
+    ax1.scatter(X_init, y_init, c="w", s=100, edgecolors="k", lw=2, zorder=3)
+    ax1.scatter(
+        best_x, best_y, c="red", s=100, marker="o", edgecolors="k", lw=1.5, zorder=5
+    )
+    ax1.plot(X_grid, mu_post, "b--", linewidth=2)
+    ax1.fill_between(
+        X_grid.ravel(),
+        (mu_post - 1.96 * sigma_post),
+        (mu_post + 1.96 * sigma_post),
+        color="blue",
+        alpha=0.2,
+    )
+    ax1.set_ylim(-3.2, 3.2)
+    ax1.set_xlim(0, 1)
+    ax1.set_ylabel("Value")
+
+    # ax2: acquisition
+    ax2.plot(X_grid, acq_values, "k-", linewidth=2)
+    next_sample_index = np.argmax(acq_values)
+    next_sample_x = X_grid.ravel()[next_sample_index]
+    ax2.axvline(next_sample_x, color="red", linestyle="--", alpha=0.5)
+    ax2.set_ylim(-2.4, 2.4)
+    ax2.set_xlim(0, 1)
+    ax2.set_xlabel("Variable")
+    ax2.set_ylabel(f"Acquisition ({strategy_name})")
+
+    # 例: 何か pdf を描くならここに
+
+    # ax4: 完全に非表示にしたいなら
+    ax4.axis("off")
+    plt.setp(ax1.get_xticklabels(), visible=False)
+    plt.setp(ax3.get_xticklabels(), visible=False)
+    plt.setp(ax3.get_yticklabels(), visible=False)
+    plt.setp(ax4.get_yticklabels(), visible=False)
+
+    return fig, ax1, ax2, ax3, ax4
