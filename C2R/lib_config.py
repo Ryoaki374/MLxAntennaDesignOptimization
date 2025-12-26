@@ -26,20 +26,6 @@ class IOConfig:
     filename_temp: str
 
 @dataclasses.dataclass
-class SimulationConfig:
-    n_simulation: int
-    n_repeats: int
-    n_init: int
-    kernel_type: str
-    n_params: int
-    length_scale: float
-    noise_std: float
-    noise_var: float
-    lower_bounds: float
-    upper_bounds: float
-    param_names: str
-
-@dataclasses.dataclass
 class GaussianProcessConfig:
     kernel_type: str
     length_scale: float
@@ -79,39 +65,26 @@ class Depends:
 @dataclasses.dataclass
 class AppConfig:
     io: IOConfig
-    #sim: SimulationConfig
     opt: GaussianProcessConfig
     hfss: HFSSConfig
     test: SyntheticTestConfig
     env: Environment
-    #dep: Depends
 
     @staticmethod
     def fromDict(config: dict) -> "AppConfig":
-        #io = config["io"]; sim = config["sim"]; opt=config["opt"]; hfss = config["hfss"]; test = config["test"]
         io = config["io"]; opt=config["opt"]; hfss = config["hfss"]; test = config["test"]
 
         dir_base = BASE_DIR
-        #n_gp = sim["n_simulation"] - sim["n_init"] 
-
         env = Environment(
             dir_base=dir_base
         )
 
-        #dep = Depends(
-        #    n_gp=n_gp
-        #)
-
-
-
         return AppConfig(
             io=IOConfig(**io),
-            #sim = SimulationConfig(**sim),
             opt = GaussianProcessConfig(**opt),
             hfss = HFSSConfig(**hfss),
             test = SyntheticTestConfig(**test),
             env = env,
-            #dep = dep
         )
 
 # ------------------------------ App ------------------------------

@@ -9,45 +9,17 @@ class GaussianProcess:
         self.cfg = config
 
     def run_gp(self, X_sample, y_sample, current_gamma):
-        #X_sample = df_current[self.cfg.sim.param_names].values
-        #y_sample = df_current[['S11']].values
-        #print(f"  > Loaded {len(X_sample)} data points for GP model training.")
-
-        #print("  > Optimizing GP hyperparameters...")
         res_hyper = minimize(
             fun= negative_log_marginal_likelihood, x0=[current_gamma],
             args=(X_sample, y_sample, self.cfg.opt.noise_var), bounds=[(0.1, 1e2)]
         )
         optimized_length_scale = res_hyper.x[0]
-        #print(f"  > Optimized Length Scale: {optimized_length_scale:.4f}")
 
         K_opt = kernel(X_sample, X_sample, optimized_length_scale)
         Ky_opt = K_opt + self.cfg.opt.noise_var * np.identity(len(X_sample)) + 1e-6 * np.identity(len(X_sample))
         Ky_opt_inv = np.linalg.inv(Ky_opt)
         return optimized_length_scale, K_opt, Ky_opt, Ky_opt_inv, res_hyper
     
-    #def getExpectedImprovement(self, X_sample, y_sample, Ky_inv, length_scale, lower_bounds, upper_bounds, dims):
-    #    
-    #    best_acq_value = -np.inf
-    #    best_x = None
-    #    n_restarts = 25
-    #    bounds = list(zip(lower_bounds, upper_bounds))
-    
-    #    for i in range(n_restarts):
-    #        x0 = np.random.uniform(lower_bounds, upper_bounds, dims)
-    #        res = minimize(
-    #            fun=negative_expected_improvement, x0=x0,
-    #            args=(X_sample, y_sample, Ky_inv, length_scale),
-    #            bounds=bounds, method='L-BFGS-B'
-    #        )
-    #        if res.success and -res.fun > best_acq_value:
-    #            best_acq_value = -res.fun
-    #            best_x = res.x
-
-    #    if best_x is None:
-    #        print("  > WARNING: Acquisition optimization failed. Using a random point.")
-    #        best_x = np.random.uniform(lower_bounds, upper_bounds, dims)
-    #    return best_x, best_acq_value
     
     def optAcquisition(self, acq_func, X_sample, y_sample, Ky_inv, gamma, lower_bounds, upper_bounds, acq_params):
 
