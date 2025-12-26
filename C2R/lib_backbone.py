@@ -83,52 +83,65 @@ class Backbone:
 
         pd.DataFrame([row]).to_csv(input_file, index=False)
 
-        print("  > Waiting for HFSS simulation to complete...")
-        # lines_before = 0
-
-        # if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
-        #     print("  > Result received from HFSS.")
-        #     return True
-        
-        #start_time = time.time()
-        # timeout = 1000
         while True:
             if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
                 time.sleep(0.5) 
                 print("  > Result received from HFSS.")
                 return True
             time.sleep(1)
-        
-        #print(f"  > [Error] Simulation timed out after {timeout} seconds.")
-        #return False
 
-        #while True:
-        #    lines_after = 0
-        #    if os.path.exists(results_file) and os.path.getsize(results_file) > 0:
-        #        with open(results_file, 'r') as f:
-        #            lines_after = len(f.readlines())
-
-        #    if lines_after > lines_before:
-        #        print("  > Result received from HFSS.")
-        #        time.sleep(0.5)
-        #        return True
-
-        #    time.sleep(1)
-
-    def LHSsampler(self, dims, lower_bounds, upper_bounds):
-        sampler = LatinHypercube(d=dims)
-        samples_continuous = sampler.random(n = self.cfg.sim.n_init)
-        #X_initial = scale(samples_continuous, self.cfg.sim.lower_bounds[:], self.cfg.sim.upper_bounds[:])
+    def LHSsampler(self, dims, nums, lower_bounds, upper_bounds):
+        sampler = LatinHypercube(d=dims,)
+        samples_continuous = sampler.random(n = nums)
         X_initial = scale(samples_continuous, lower_bounds, upper_bounds)
         return X_initial
     
-    def _genOutputDataFrame(self, df_current: pd.DataFrame, acq_values: np.ndarray):
+    def LHSsampler(self, dims, nums, lower_bounds, upper_bounds, known_points=None):
+        
+        # --- 1. Handle Known Points ---
+        X_known = np.empty((0, dims)) # Initialize as empty array
+        n_needed = nums # Number of points left to generate via LHS
+
+        if known_points is not None:
+            X_known = np.array(known_points)
+            
+            # Ensure 2D shape (n_samples, n_params)
+            if X_known.ndim == 1: 
+                X_known = X_known.reshape(1, -1)
+            
+            n_known = len(X_known)
+            
+            # Calculate how many random LHS points are needed to fill the quota
+            n_needed = max(0, nums - n_known)
+            
+            print(f" > Using {n_known} known points. Generating {n_needed} LHS points.")
+
+        # --- 2. Generate Remaining Points with LHS ---
+        if n_needed > 0:
+            sampler = LatinHypercube(d=dims,) 
+            samples_continuous = sampler.random(n=n_needed)
+            X_lhs = scale(samples_continuous, lower_bounds, upper_bounds)
+        else:
+            # If known_points filled the quota, no LHS needed
+            X_lhs = np.empty((0, dims))
+
+        # --- 3. Combine Known and LHS Points ---
+        if len(X_known) > 0:
+            if len(X_lhs) > 0:
+                # Stack them vertically
+                X_initial = np.vstack([X_known, X_lhs])
+            else:
+                # If we have enough known points, just take the first 'nums' points
+                X_initial = X_known[:nums] 
+        else:
+            # Only LHS points
+            X_initial = X_lhs
+
+        return X_initial
+
+    def _genOutputDataFrame(self, df_current: pd.DataFrame,):
         df_output = df_current.copy()
-        # df_output = df_output.rename(columns={"*": "epoch"})
         df_output["best"] = df_output["S11"].cummin()
-        full_acq_col = np.full(len(df_output), np.nan)
-        full_acq_col[self.cfg.sim.n_init:] = acq_values
-        df_output["acq"] = full_acq_col
         return df_output
     
     def printn(self, msg: str) -> None:

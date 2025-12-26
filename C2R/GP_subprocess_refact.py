@@ -119,20 +119,6 @@ def runSimulation(input_csv_path):
         except Exception as cleanup_e:
             printlog("[ERROR] HFSS object cleanup: {}".format(cleanup_e))
 
-# def genStripedValues(row_data):
-#     
-#     clean_row = {}
-# 
-#     for key, val in row_data.items():
-#         if isinstance(val, str) and 'mm' in val:
-#             try:
-#                 clean_row[key] = float(val.replace('mm', '').strip())
-#             except ValueError:
-#                 pass
-#         else:
-#             clean_row[key] = val
-#         
-#     return clean_row
     
 # --- Main Loop ---
 printlog("[State] Entering main loop...")

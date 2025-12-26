@@ -8,37 +8,65 @@ class GaussianProcess:
     def __init__(self, config: AppConfig,):
         self.cfg = config
 
-    def run_gp(self, X_sample, y_sample):
+    def run_gp(self, X_sample, y_sample, current_gamma):
         #X_sample = df_current[self.cfg.sim.param_names].values
         #y_sample = df_current[['S11']].values
-        print(f"  > Loaded {len(X_sample)} data points for GP model training.")
+        #print(f"  > Loaded {len(X_sample)} data points for GP model training.")
 
-        print("  > Optimizing GP hyperparameters...")
+        #print("  > Optimizing GP hyperparameters...")
         res_hyper = minimize(
-            fun= negative_log_marginal_likelihood, x0=[self.cfg.sim.length_scale],
-            args=(X_sample, y_sample, self.cfg.sim.noise_var), bounds=[(1e-2, 1e2)]
+            fun= negative_log_marginal_likelihood, x0=[current_gamma],
+            args=(X_sample, y_sample, self.cfg.opt.noise_var), bounds=[(0.1, 1e2)]
         )
         optimized_length_scale = res_hyper.x[0]
-        print(f"  > Optimized Length Scale: {optimized_length_scale:.4f}")
+        #print(f"  > Optimized Length Scale: {optimized_length_scale:.4f}")
 
         K_opt = kernel(X_sample, X_sample, optimized_length_scale)
-        Ky_opt = K_opt + self.cfg.sim.noise_var * np.identity(len(X_sample))
+        Ky_opt = K_opt + self.cfg.opt.noise_var * np.identity(len(X_sample)) + 1e-6 * np.identity(len(X_sample))
         Ky_opt_inv = np.linalg.inv(Ky_opt)
         return optimized_length_scale, K_opt, Ky_opt, Ky_opt_inv, res_hyper
     
-    def getExpectedImprovement(self, X_sample, y_sample, Ky_inv, length_scale, lower_bounds, upper_bounds, dims):
-        
+    #def getExpectedImprovement(self, X_sample, y_sample, Ky_inv, length_scale, lower_bounds, upper_bounds, dims):
+    #    
+    #    best_acq_value = -np.inf
+    #    best_x = None
+    #    n_restarts = 25
+    #    bounds = list(zip(lower_bounds, upper_bounds))
+    
+    #    for i in range(n_restarts):
+    #        x0 = np.random.uniform(lower_bounds, upper_bounds, dims)
+    #        res = minimize(
+    #            fun=negative_expected_improvement, x0=x0,
+    #            args=(X_sample, y_sample, Ky_inv, length_scale),
+    #            bounds=bounds, method='L-BFGS-B'
+    #        )
+    #        if res.success and -res.fun > best_acq_value:
+    #            best_acq_value = -res.fun
+    #            best_x = res.x
+
+    #    if best_x is None:
+    #        print("  > WARNING: Acquisition optimization failed. Using a random point.")
+    #        best_x = np.random.uniform(lower_bounds, upper_bounds, dims)
+    #    return best_x, best_acq_value
+    
+    def optAcquisition(self, acq_func, X_sample, y_sample, Ky_inv, gamma, lower_bounds, upper_bounds, acq_params):
+
+        dims = len(lower_bounds)
         best_acq_value = -np.inf
         best_x = None
         n_restarts = 25
         bounds = list(zip(lower_bounds, upper_bounds))
 
+        def acquisitionWrapper(x):
+            val = acq_func(
+                x, X_sample, y_sample, Ky_inv, gamma, **acq_params
+            )
+            return -val # minimize(-acq) = maximize(acq)
+        
         for i in range(n_restarts):
             x0 = np.random.uniform(lower_bounds, upper_bounds, dims)
             res = minimize(
-                fun=negative_expected_improvement, x0=x0,
-                args=(X_sample, y_sample, Ky_inv, length_scale),
-                bounds=bounds, method='L-BFGS-B'
+                fun=acquisitionWrapper, x0=x0, bounds=bounds, method="L-BFGS-B"
             )
             if res.success and -res.fun > best_acq_value:
                 best_acq_value = -res.fun
@@ -47,8 +75,8 @@ class GaussianProcess:
         if best_x is None:
             print("  > WARNING: Acquisition optimization failed. Using a random point.")
             best_x = np.random.uniform(lower_bounds, upper_bounds, dims)
+    
         return best_x, best_acq_value
-
 
 
 
@@ -57,11 +85,9 @@ class GaussianProcess:
 # ==============================================================================
 # 2. Gaussian Process Helper Functions
 # ==============================================================================
-def rbf_kernel(x1: np.ndarray, x2: np.ndarray, length_scale: float = 1.0) -> np.ndarray:
-    if x1.ndim == 1: x1 = x1.reshape(1, -1)
-    if x2.ndim == 1: x2 = x2.reshape(1, -1)
-    sqdist = np.sum((x1[:, np.newaxis, :] - x2[np.newaxis, :, :]) ** 2, axis=-1)
-    return np.exp(-0.5 / length_scale**2 * sqdist)
+def rbf_kernel(x1: np.ndarray, x2: np.ndarray, gamma: float) -> np.ndarray:
+    sqdist = np.sum(x1**2, 1).reshape(-1, 1) - 2 * np.dot(x1, x2.T) + np.sum(x2**2, 1)
+    return np.exp(-gamma * sqdist)
 
 def matern_kernel(x1: np.ndarray, x2: np.ndarray, length_scale: float = 1.0, nu: float = 2.5) -> np.ndarray:
     if x1.ndim == 1: x1 = x1.reshape(1, -1)
@@ -104,6 +130,16 @@ def expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi
 def negative_expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi=0.01):
     return -expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi)
 
+def lower_confidence_bound(
+    x_new, X_sample, y_sample, Ky_opt_inv, length_scale, kappa=2.0
+):
+    mu, sigma = get_posterior(
+        x_new, X_sample, y_sample, Ky_opt_inv, length_scale
+    )
+    # LCB wants small mu - kappa*sigma.
+    # We return NEGATIVE LCB because optAcquisition minimizes the return value.
+    return -(mu - kappa * sigma)
+
 def optimize_acquisition(X_sample, y_sample, Ky_opt_inv, length_scale, lower_bounds, upper_bounds, DIMS):
     best_acq_value = -np.inf
     best_x = None
@@ -127,11 +163,12 @@ def optimize_acquisition(X_sample, y_sample, Ky_opt_inv, length_scale, lower_bou
     return best_x, best_acq_value
 
 def negative_log_marginal_likelihood(params, X, y, noise_var):
-    length_scale = params[0]
-    if length_scale <= 0: return np.inf
+    gamma = params[0]
+    if gamma <= 0: return np.inf
     n = len(X)
-    K = kernel(X, X, length_scale)
-    Ky = K + noise_var * np.identity(n)
+    K = kernel(X, X, gamma)
+    #Ky = K + noise_var * np.identity(n) 
+    Ky = K + noise_var * np.identity(n) + 1e-6 * np.identity(n)
     try:
         L = np.linalg.cholesky(Ky)
         alpha = np.linalg.solve(L.T, np.linalg.solve(L, y))

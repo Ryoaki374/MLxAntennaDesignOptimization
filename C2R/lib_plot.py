@@ -28,14 +28,14 @@ def plot_learning_curve(df_output):
     ax2 = ax.twinx()
     ax2.plot(
         df_output.index,
-        df_output["acq"],
+        df_output["Acq"],
         marker='x',
         linestyle=':',
         markersize=4,
         color='tab:green',
         label='Calculated EI'
     )
-    ax2.set_ylabel('Expected Improvement (EI)', color='tab:green')
+    ax2.set_ylabel('Acquisition', color='tab:green')
     ax2.tick_params(axis='y', labelcolor='tab:green')
 
     ax.grid(True, linestyle='--', alpha=0.6)
