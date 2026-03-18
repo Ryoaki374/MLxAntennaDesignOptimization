@@ -14,16 +14,40 @@
     noise_var       = 0.0001
 
 # ------------------------------------------------------------  HFSS simulation
+#[hfss]
+#    n_simulation    = 3  # maximum number of smulations per each iteration
+#    n_repeats       = 1   # total nuber of iterations
+#    n_init          = 1
+#    n_params        = 5
+#    lower_bounds    = [-10, 1, 2, 2, 1,]
+#    upper_bounds    = [-2, 5, 8, 8, 6,]
+#    param_names     = ['c', 'n', 'a', 'b', 'k']
+#    param_units     = ["mm", "", 'mm', 'mm', '']
+#    filename_models = ["Backshort.step", "Finshape.step"]
+
 [hfss]
-    n_simulation    = 70  # maximum number of smulations per each iteration
-    n_repeats       = 2   # total nuber of iterations
-    n_init          = 15
-    n_params        = 5
-    lower_bounds    = [-10, 1, 2, 2, 1,]
-    upper_bounds    = [-2, 5, 8, 8, 6,]
-    param_names     = ['c', 'n', 'a', 'b', 'k']
-    param_units     = ["mm", "", 'mm', 'mm', '']
+    n_simulation = 50
+    n_repeats = 1
+    n_init = 15
+    n_params = 5
+    group_order = ["A", "B"]
     filename_models = ["Backshort.step", "Finshape.step"]
+
+    [hfss.param_groups.A]
+    param_names  = ["c", "n"]
+    param_units  = ["mm", ""]
+    lower_bounds = [-10, 1]
+    upper_bounds = [-2, 5]
+    baseline     = [-6.0, 3.0]
+    vary         = true
+
+    [hfss.param_groups.B]
+    param_names  = ["a", "b", "k"]
+    param_units  = ["mm", "mm", ""]
+    lower_bounds = [2, 2, 1]
+    upper_bounds = [8, 8, 6]
+    baseline     = [4.0, 6.0, 2.0]
+    vary         = true
 
 
 # ------------------------------------------------------------  Synthetic Test Function

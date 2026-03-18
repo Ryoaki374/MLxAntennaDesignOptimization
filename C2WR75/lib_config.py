@@ -1,4 +1,5 @@
 import dataclasses
+from typing import Any, Dict, List
 
 from pathlib import Path
 import numpy as np
@@ -33,17 +34,31 @@ class GaussianProcessConfig:
     noise_var: float
 
 
+#@dataclasses.dataclass
+#class HFSSConfig:
+#    n_simulation: int
+#    n_repeats: int
+#    n_init: int
+#    n_params: int
+#    lower_bounds: float
+#    upper_bounds: float
+#    param_names: str
+#    param_units: float
+#    filename_models: str
+
 @dataclasses.dataclass
 class HFSSConfig:
     n_simulation: int
     n_repeats: int
     n_init: int
     n_params: int
-    lower_bounds: float
-    upper_bounds: float
-    param_names: str
-    param_units: float
-    filename_models: str
+    lower_bounds: List[float]
+    upper_bounds: List[float]
+    param_names: List[str]
+    param_units: List[str]
+    filename_models: List[str]
+    param_groups: Dict[str, Dict[str, Any]]
+    group_order: List[str] | None = None
 
 @dataclasses.dataclass
 class SyntheticTestConfig:
@@ -75,6 +90,8 @@ class AppConfig:
     @staticmethod
     def fromDict(config: dict) -> "AppConfig":
         io = config["io"]; opt=config["opt"]; hfss = config["hfss"]; test = config["test"]
+
+        hfss = flatten_hfss_param_groups(hfss) # flatten param groups if they exist
 
         dir_base = BASE_DIR
         env = Environment(
@@ -116,3 +133,32 @@ def initParams(_config: dict, debug: bool = True, runs_dir: Path | str = RUNS_DI
     if debug:
         printConfig(cfg)
     return cfg
+
+def flatten_hfss_param_groups(hfss: Dict[str, Any]) -> Dict[str, Any]:
+
+    if "param_groups" not in hfss:
+        return hfss
+
+    pg = hfss["param_groups"]
+
+    order: List[str] = hfss.get("group_order") or list(pg.keys())
+
+    lower: List[float] = []
+    upper: List[float] = []
+    names: List[str] = []
+    units: List[str] = []
+
+    for gname in order:
+        g = pg[gname]
+        names.extend(list(g["param_names"]))
+        units.extend(list(g["param_units"]))
+        lower.extend(list(g["lower_bounds"]))
+        upper.extend(list(g["upper_bounds"]))
+
+    hfss["param_names"] = names
+    hfss["param_units"] = units
+    hfss["lower_bounds"] = lower
+    hfss["upper_bounds"] = upper
+    hfss["n_params"] = len(names)
+
+    return hfss

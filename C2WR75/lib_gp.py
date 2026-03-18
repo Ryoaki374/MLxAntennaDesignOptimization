@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import norm
+from typing import Sequence, Optional, List, Tuple, Callable
 
 class GaussianProcess:
     def __init__(self, config: AppConfig,):
@@ -49,14 +50,98 @@ class GaussianProcess:
             best_x = np.random.uniform(lower_bounds, upper_bounds, dims)
     
         return best_x, best_acq_value
+    
+    def optAcquisition(self, acq_func, X_sample, y_sample, Ky_inv, gamma, lower_bounds, upper_bounds,acq_params, active_indices: Optional[List[int]] = None, fixed_point: Optional[np.ndarray] = None,n_restarts: int = 25,) -> Tuple[np.ndarray, float]:
 
+        lower_bounds = np.asarray(lower_bounds, dtype=float)
+        upper_bounds = np.asarray(upper_bounds, dtype=float)
+        dims = len(lower_bounds)
 
+        # ---- full-dimensional optimization ----
+        if active_indices is None or len(active_indices) == dims:
+            bounds_full = list(zip(lower_bounds.tolist(), upper_bounds.tolist()))
+
+            def acquisitionWrapper(x):
+                val = acq_func(x, X_sample, y_sample, Ky_inv, gamma, **acq_params)
+                return -val
+
+            best_x, best_acq_value = _optimizer(
+                fun=acquisitionWrapper,
+                bounds=bounds_full,
+                x0_sampler=lambda: np.random.uniform(lower_bounds, upper_bounds, size=dims),
+                n_restarts=n_restarts,
+            )
+
+            if best_x is None:
+                print("  > WARNING: Acquisition optimization failed. Using a random point.")
+                best_x = np.random.uniform(lower_bounds, upper_bounds, size=dims)
+                best_acq_value = acq_func(best_x, X_sample, y_sample, Ky_inv, gamma, **acq_params)
+
+            return best_x, best_acq_value
+
+        # ---- partial optimization with fixed dims ----
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
+
+        active = list(active_indices)
+        lb, ub = _sliceBounds(lower_bounds, upper_bounds, active)
+        bounds_free = list(zip(lb.tolist(), ub.tolist()))
+
+        fixed_point = np.asarray(fixed_point, dtype=float)
+        if fixed_point.shape != (dims,):
+            fixed_point = fixed_point.reshape(-1)
+
+        def acquisitionWrapperFree(z):
+            x = _reshapeX(fixed_point, active, z)
+            val = acq_func(x, X_sample, y_sample, Ky_inv, gamma, **acq_params)
+            return -val
+
+        best_z, best_acq_value = _optimizer(
+            fun=acquisitionWrapperFree,
+            bounds=bounds_free,
+            x0_sampler=lambda: np.random.uniform(lb, ub, size=len(active)),
+            n_restarts=n_restarts,
+        )
+
+        if best_z is None:
+            print("  > WARNING: Acquisition optimization failed. Using a random point (with fixed dims).")
+            z = np.random.uniform(lb, ub, size=len(active))
+            best_x = _reshapeX(fixed_point, active, z)
+            best_acq_value = acq_func(best_x, X_sample, y_sample, Ky_inv, gamma, **acq_params)
+            return best_x, best_acq_value
+
+        best_x = _reshapeX(fixed_point, active, best_z)
+        return best_x, best_acq_value
 
 
 
 # ==============================================================================
 # 2. Gaussian Process Helper Functions
 # ==============================================================================
+def _reshapeX(fixed_point: np.ndarray, active_indices: Sequence[int], z: np.ndarray) -> np.ndarray:
+    x = np.array(fixed_point, dtype=float, copy=True)
+    x[list(active_indices)] = np.asarray(z, dtype=float)
+    return x
+
+def _sliceBounds(lower_bounds, upper_bounds, active_indices: Sequence[int],) -> Tuple[np.ndarray, np.ndarray]:
+        lb = np.asarray(lower_bounds, dtype=float)[list(active_indices)]
+        ub = np.asarray(upper_bounds, dtype=float)[list(active_indices)]
+        return lb, ub
+
+def _optimizer(fun: Callable[[np.ndarray], float], bounds: List[Tuple[float, float]], x0_sampler: Callable[[], np.ndarray], n_restarts: int,) -> Tuple[Optional[np.ndarray], float]:
+    best_val = -np.inf
+    best_x = None
+    for _ in range(n_restarts):
+        x0 = x0_sampler()
+        res = minimize(fun=fun, x0=x0, bounds=bounds, method="L-BFGS-B")
+        if res.success:
+            cand_val = -res.fun
+            if cand_val > best_val:
+                best_val = cand_val
+                best_x = res.x
+    return best_x, best_val
+
+
 def rbf_kernel(x1: np.ndarray, x2: np.ndarray, gamma: float) -> np.ndarray:
     sqdist = np.sum(x1**2, 1).reshape(-1, 1) - 2 * np.dot(x1, x2.T) + np.sum(x2**2, 1)
     return np.exp(-gamma * sqdist)

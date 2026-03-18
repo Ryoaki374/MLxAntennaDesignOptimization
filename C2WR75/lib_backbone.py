@@ -9,6 +9,7 @@ import json
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from typing import Dict, List, Tuple, Any, Optional, Sequence, Mapping
 
 import lib_RFdesign
 
@@ -165,7 +166,7 @@ class Backbone:
         a = param_values[2]
         b = param_values[3]
         k = param_values[4]
-        print(param_values)
+        #print(param_values)
         convex_finshape = design.genFinshape(a=a, b=b, k=k, grid_res=400, shifts=(0.0, -1.0))
         #design.plotProfile2D(convex_finshape)
 
@@ -190,48 +191,130 @@ class Backbone:
         X_initial = scale(samples_continuous, lower_bounds, upper_bounds)
         return X_initial
     
-    def LHSsampler(self, dims, nums, lower_bounds, upper_bounds, known_points=None):
+    def LHSsampler_extended(self, dims: int, nums: int, lower_bounds, upper_bounds, active_indices: Optional[List[int]] = None, fixed_point: Optional[np.ndarray] = None, ) -> np.ndarray:
+        """
+        Extended LHS sampler:
+          - If active_indices is None: sample all dims via base LHSsampler.
+          - Else: sample only active dims, and fill inactive dims with fixed_point.
+        """
+        if active_indices is None or len(active_indices) == dims:
+            return self.LHSsampler(dims, nums, lower_bounds, upper_bounds)
+
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
+
+        active = list(active_indices)
+        free_dims = len(active)
+
+        # 1) sample only free dims using the base sampler
+        lb, ub = self._sliceBounds(lower_bounds, upper_bounds, active)
+        X_free = self.LHSsampler(free_dims, nums, lb, ub)  # (nums, free_dims)
+
+        # 2) build full matrix from fixed_point and override active dims
+        X = self._tileFixedPoint(fixed_point, nums)          # (nums, dims)
+        X[:, active] = X_free
+        return X
+    
+    def LHSsampler_extended(self, dims: int, nums: int, lower_bounds, upper_bounds, active_indices: Optional[List[int]] = None, fixed_point: Optional[np.ndarray] = None, fixed_points: Optional[np.ndarray] = None) -> np.ndarray:
         
-        # --- 1. Handle Known Points ---
-        X_known = np.empty((0, dims)) # Initialize as empty array
-        n_needed = nums # Number of points left to generate via LHS
+        X_fixed = self._as2dPoints(fixed_points, dims)
+        n_fixed = len(X_fixed)
+        n_needed = max(0, nums - n_fixed)
 
-        if known_points is not None:
-            X_known = np.array(known_points)
-            
-            # Ensure 2D shape (n_samples, n_params)
-            if X_known.ndim == 1: 
-                X_known = X_known.reshape(1, -1)
-            
-            n_known = len(X_known)
-            
-            # Calculate how many random LHS points are needed to fill the quota
-            n_needed = max(0, nums - n_known)
-            
-            print(f" > Using {n_known} known points. Generating {n_needed} LHS points.")
+        # If we already have enough fixed points, just return them
+        if n_needed == 0:
+            return X_fixed[:nums]
 
-        # --- 2. Generate Remaining Points with LHS ---
-        if n_needed > 0:
-            sampler = LatinHypercube(d=dims,) 
-            samples_continuous = sampler.random(n=n_needed)
-            X_lhs = scale(samples_continuous, lower_bounds, upper_bounds)
-        else:
-            # If known_points filled the quota, no LHS needed
-            X_lhs = np.empty((0, dims))
+        # full LHS
+        if active_indices is None or len(active_indices) == dims:
+            X_gen = self.LHSsampler(dims, n_needed, lower_bounds, upper_bounds)
+            return self._mergePoints(X_fixed, X_gen, nums)
 
-        # --- 3. Combine Known and LHS Points ---
-        if len(X_known) > 0:
-            if len(X_lhs) > 0:
-                # Stack them vertically
-                X_initial = np.vstack([X_known, X_lhs])
-            else:
-                # If we have enough known points, just take the first 'nums' points
-                X_initial = X_known[:nums] 
-        else:
-            # Only LHS points
-            X_initial = X_lhs
+        # partial LHS with fixed dims
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
 
-        return X_initial
+        active = list(active_indices)
+        free_dims = len(active)
+
+        # 1) sample only free dims using the base sampler
+        lb, ub = self._sliceBounds(lower_bounds, upper_bounds, active)
+        X_free = self.LHSsampler(free_dims, n_needed, lb, ub)  # (n_needed, free_dims)
+
+        # 2) build full matrix from fixed_point and override active dims
+        X_gen = self._tileFixedPoint(fixed_point, n_needed)       # (n_needed, dims)
+        X_gen[:, active] = X_free
+
+        return self._mergePoints(X_fixed, X_gen, nums)
+    
+    def _buildSamplingIndices(self, dims: int, param_groups: Mapping[str, Mapping[str, Any]], group_order: Optional[List[str]] = None,) -> Tuple[List[int], np.ndarray, Dict[str, List[int]]]:
+
+        # determine the order of groups to process
+        order = group_order or list(param_groups.keys())
+
+        fixed_point = np.empty((dims,), dtype=float)
+        group_indices: Dict[str, List[int]] = {}
+
+        cursor = 0 # dummy values for fixed_point; will be overwritten by actual baseline values
+        active_set = set() # to collect indices of parameters that noted as "vary" in any group
+
+        for gname in order:
+
+            # read
+            g = param_groups[gname]
+            names = list(g["param_names"])
+            baseline = list(g["baseline"])
+            vary = bool(g["vary"])
+
+            # create indices for this group
+            m = len(names)
+            idxs = list(range(cursor, cursor + m))
+            group_indices[gname] = idxs
+
+            # set fixed point values for this group
+            for i, v in zip(idxs, baseline):
+                fixed_point[i] = float(v)
+
+            # if this group is marked as "vary", add its indices to the active set
+            if vary:
+                active_set.update(idxs)
+
+            cursor += m
+
+        active_indices = sorted(active_set)
+        return active_indices, fixed_point, group_indices
+    
+
+    def _as2dPoints(self, x: Optional[np.ndarray], dims: int) -> np.ndarray:
+        """
+        None -> (0, dims)
+        (dims,) -> (1, dims)
+        (n, dims) -> (n, dims)
+        """
+        if x is None:
+            return np.empty((0, dims), dtype=float)
+        arr = np.asarray(x, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+        return arr
+    
+    def _tileFixedPoint(self, fixed_point: np.ndarray, n: int) -> np.ndarray: # copy fixed_point
+        # fixed_point: (dims,)
+        return np.tile(np.asarray(fixed_point, dtype=float), (n, 1))
+    
+    def _sliceBounds(self, lower_bounds, upper_bounds, active_indices: Sequence[int]) -> Tuple[np.ndarray, np.ndarray]:
+        lb = np.asarray(lower_bounds, dtype=float)[list(active_indices)]
+        ub = np.asarray(upper_bounds, dtype=float)[list(active_indices)]
+        return lb, ub
+    
+    def _mergePoints(self, X_fixed: np.ndarray, X_gen: np.ndarray, nums: int) -> np.ndarray:
+        if len(X_fixed) == 0:
+            return X_gen[:nums]
+        if len(X_gen) == 0:
+            return X_fixed[:nums]
+        X = np.vstack([X_fixed, X_gen])
+        return X[:nums]
+
 
     def _genOutputDataFrame(self, df_current: pd.DataFrame,):
         df_output = df_current.copy()
